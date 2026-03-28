@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waymo London — Cohort Deployment Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#060B14;font-family:'JetBrains Mono',monospace;color:#E2E8F0}
+  #app{width:100vw;height:100vh;position:relative}
+  #loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;background:#060B14;transition:opacity .6s}
+  #loader.hidden{opacity:0;pointer-events:none}
+  .spin{width:36px;height:36px;border:2px solid #141E30;border-top-color:#00E5A0;border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #loader .lb{font-size:9px;letter-spacing:4px;color:#2A4060}
+  #loader .sub{font-size:8px;color:#141E30;letter-spacing:1px;max-width:500px;text-align:center;line-height:1.6}
+  #err{display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:40;background:#060B14}
+  #err.show{display:flex}
+  #err .t{font-size:12px;color:#EF4444;letter-spacing:2px}
+  #err .d{font-size:9px;color:#2A4060;max-width:500px;text-align:center;line-height:1.8;white-space:pre-line}
+  #hdr{position:absolute;top:2vh;left:4vw;pointer-events:none;z-index:10}
+  #hdr .bk{width:7px;height:7px;border-radius:50%;background:#00E5A0;box-shadow:0 0 10px #00E5A0;display:inline-block;margin-right:10px;vertical-align:middle}
+  #hdr .sy{font-size:9px;letter-spacing:5px;color:#00E5A0;font-weight:700}
+  #hdr h1{font-size:clamp(16px,2.2vw,24px);font-weight:800;letter-spacing:.5px;margin-top:4px}
+  #hdr .su{font-size:8px;color:#1E3450;margin-top:3px;letter-spacing:2px}
+  #leg{position:absolute;top:8vh;right:2vw;width:clamp(200px,24vw,320px);background:rgba(6,11,20,.9);border-left:1px solid #141E30;padding:16px 18px;max-height:84vh;overflow-y:auto;z-index:10}
+  #leg::-webkit-scrollbar{width:3px}
+  #leg::-webkit-scrollbar-thumb{background:#141E30;border-radius:2px}
+  .st{font-size:7px;letter-spacing:4px;color:#1E3450;font-weight:700;margin-bottom:14px;padding-bottom:7px;border-bottom:1px solid #0E1A28}
+  .cr{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start}
+  .cs{width:30px;height:30px;border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800}
+  .cn{font-size:10px;font-weight:700;color:#C0C8D8;margin-bottom:1px}
+  .cne{font-size:8px;color:#3A5A7A;line-height:1.4}
+  .cb{font-size:7px;color:#141E30;margin-top:2px}
+  .dv{border-top:1px solid #0E1A28;margin:10px 0 12px}
+  .or{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .os{width:20px;height:20px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;color:#0E1A28}
+  .on{font-size:9px;font-weight:600;color:#5A6A80}
+  .one{font-size:7px;color:#1E3450}
+  .pb{display:flex;gap:2px;margin-top:6px}
+  .pb div{flex:1;height:4px;border-radius:2px}
+  #tt{display:none;position:fixed;background:rgba(11,18,34,.95);border:1px solid #1A3050;border-radius:6px;padding:10px 14px;pointer-events:none;z-index:100;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.7);backdrop-filter:blur(8px)}
+  #tt.show{display:block}
+  #ft{position:absolute;bottom:2vh;left:4vw;font-size:7px;color:#0E1A28;letter-spacing:2px;z-index:10;display:flex;gap:16px;align-items:center}
+  .pd{width:5px;height:5px;border-radius:50%;background:#00E5A0;animation:pu 2s infinite}
+  @keyframes pu{0%,100%{opacity:.3}50%{opacity:.8}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="loader"><div class="spin"></div><div class="lb">LOADING BOROUGH GEOMETRY</div><div class="sub" id="ls">Connecting…</div></div>
+  <div id="err"><div class="t">BOUNDARY DATA UNAVAILABLE</div><div class="d" id="ed"></div></div>
+  <svg id="map-svg"></svg>
+  <div id="hdr"><div><span class="bk"></span><span class="sy">WAYMO · LONDON</span></div><h1>Cohort Deployment Map</h1><div class="su">PILOT BOROUGH TARGETING · AUDIENCE STRATEGY v2.0 · 2026</div></div>
+  <div id="leg" id="legend-panel"></div>
+  <div id="tt"><div id="th"></div><div id="tc" style="font-size:9px;font-weight:600;margin-top:3px"></div><div id="tn" style="font-size:8px;color:#3A5A7A;margin-top:2px"></div></div>
+  <div id="ft"><div class="pd"></div><span>adam&eveTBWA · WAYMO LONDON LAUNCH · CONFIDENTIAL</span><span style="opacity:.4">|</span><span>ONS Borough Boundaries · Cohort Strategy v2.0</span></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const SOURCES=[
+  {url:'https://raw.githubusercontent.com/radoi90/housequest-data/master/london_boroughs.geojson',nk:'name'},
+  {url:'https://raw.githubusercontent.com/westminsterDataStudio/open_data/main/boundary_files/boroughs_london.geojson',nk:'NAME'},
+];
+const COHORTS={
+  'The Frictionless Native':{c:'#0066FF',b:['Camden','Islington','Southwark'],n:'Seamless digital integration',l:2},
+  'The Privacy Premium':{c:'#0D1B2A',sk:'#2A4F6F',b:['Westminster','City of London','Kensington and Chelsea'],n:'Silence, privacy, consistency',l:1},
+  'The 3AM Londoner':{c:'#00E5A0',b:['Hackney','Tower Hamlets','Lambeth'],n:'Safety when options vanish',l:3},
+  'The Last Mile Londoner':{c:'#B8D940',b:['Barking and Dagenham','Newham','Lewisham','Croydon'],n:'First/last mile to rail',l:4},
+};
+const OVERLAYS={
+  'The Visitor':{c:'#8B95B0',n:'Navigation & confidence',l:5},
+  'The Accessibility Dependent':{c:'#E8B4B4',n:'Door-to-door without barriers',l:5},
+};
+
+function gc(name){
+  const lo=name.toLowerCase();
+  for(const[k,v]of Object.entries(COHORTS)){
+    if(v.b.some(b=>lo.includes(b.toLowerCase())||b.toLowerCase().includes(lo)))return{cn:k,...v};
+  }
+  return null;
+}
+function gn(f,nk){return f.properties[nk]||f.properties.name||f.properties.NAME||f.properties.Name||'Unknown'}
+
+async function loadGeo(){
+  const s=document.getElementById('ls');
+  for(let i=0;i<SOURCES.length;i++){
+    const src=SOURCES[i];
+    s.textContent=`Source ${i+1}/${SOURCES.length}: ${src.url.split('/').pop()}`;
+    console.log('[Map] Trying:',src.url);
+    try{
+      const ac=new AbortController();
+      const t=setTimeout(()=>ac.abort(),20000);
+      const r=await fetch(src.url,{signal:ac.signal});
+      clearTimeout(t);
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      s.textContent='Parsing geometry…';
+      const d=await r.json();
+      console.log('[Map] Got',d?.features?.length,'features');
+      if(d?.features?.length>=20){
+        const p=d.features[0].properties;
+        const nk=p.name?'name':p.NAME?'NAME':p.Name?'Name':src.nk;
+        console.log('[Map] Using key:',nk,'→',gn(d.features[0],nk));
+        return{geo:d,nk};
+      }
+      throw new Error(d?.features?.length+' features (need 20+)');
+    }catch(e){
+      console.warn('[Map] Source',i+1,'fail:',e.message);
+      s.textContent=`Source ${i+1} failed (${e.message}). ${i<SOURCES.length-1?'Trying next…':''}`;
+      await new Promise(r=>setTimeout(r,500));
+    }
+  }
+  throw new Error('All GeoJSON sources failed.\n\nCheck DevTools console (F12) for details.\nThis usually means the GitHub raw content CDN is blocked.');
+}
+
+function buildLegend(){
+  let h='<div class="st">COHORT SYSTEM</div>';
+  for(const[name,d]of Object.entries(COHORTS)){
+    const bdr=d.c==='#0D1B2A'?'border:1px solid #2A4F6F;':'';
+    const shd=d.c!=='#0D1B2A'?`box-shadow:0 0 12px ${d.c}40;`:'';
+    const tc=(d.c==='#B8D940'||d.c==='#0D1B2A')?'#0E1A28':'#fff';
+    h+=`<div class="cr"><div class="cs" style="background:${d.c};${bdr}${shd}color:${tc};opacity:${d.c==='#0D1B2A'?.5:.9}">L${d.l}</div><div><div class="cn">${name}</div><div class="cne">${d.n}</div><div class="cb">${d.b.join(' · ')}</div></div></div>`;
+  }
+  h+='<div class="dv"></div><div class="st">CROSS-BOROUGH OVERLAYS</div>';
+  for(const[name,d]of Object.entries(OVERLAYS)){
+    h+=`<div class="or"><div class="os" style="background:${d.c};opacity:.45">L${d.l}</div><div><div class="on">${name}</div><div class="one">${d.n}</div></div></div>`;
+  }
+  h+=`<div class="dv"></div><div class="st">DEPLOYMENT PRIORITY</div><div class="pb"><div style="background:#00E5A0;box-shadow:0 0 6px #00E5A050"></div><div style="background:#B8D940;box-shadow:0 0 6px #B8D94050"></div><div style="background:#0066FF"></div><div style="background:#0D1B2A;border:1px solid #1A3050"></div><div style="background:#8B95B0;opacity:.35"></div></div><div style="display:flex;justify-content:space-between;margin-top:4px;font-size:6px;color:#1E3450;letter-spacing:1.5px"><span>LAUNCH FIRST</span><span>PHASE 2+</span></div>`;
+  document.getElementById('leg').innerHTML=h;
+}
+
+function render(geo,nk){
+  const w=window.innerWidth,h=window.innerHeight;
+  const mW=w*.62,mH=h*.84,ox=w*.04,oy=h*.09;
+  const svg=d3.select('#map-svg').attr('width',w).attr('height',h);
+  svg.selectAll('*').remove();
+  const proj=d3.geoMercator().fitSize([mW,mH],geo);
+  const path=d3.geoPath().projection(proj);
+  const defs=svg.append('defs');
+
+  ['#0066FF','#00E5A0','#B8D940'].forEach((col,i)=>{
+    const f=defs.append('filter').attr('id','g'+i).attr('x','-30%').attr('y','-30%').attr('width','160%').attr('height','160%');
+    f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation','3').attr('result','b');
+    f.append('feFlood').attr('flood-color',col).attr('flood-opacity','.1').attr('result','fc');
+    f.append('feComposite').attr('in','fc').attr('in2','b').attr('operator','in').attr('result','gc');
+    const m=f.append('feMerge');m.append('feMergeNode').attr('in','gc');m.append('feMergeNode').attr('in','SourceGraphic');
+  });
+  const gm={'#0066FF':'g0','#00E5A0':'g1','#B8D940':'g2'};
+  const g=svg.append('g').attr('transform',`translate(${ox},${oy})`);
+
+  // Grid
+  const gg=g.append('g').attr('opacity',.03);
+  for(let i=0;i<mW;i+=60)gg.append('line').attr('x1',i).attr('y1',0).attr('x2',i).attr('y2',mH).attr('stroke','#1A4060').attr('stroke-width',.4).attr('stroke-dasharray','1,5');
+  for(let j=0;j<mH;j+=60)gg.append('line').attr('x1',0).attr('y1',j).attr('x2',mW).attr('y2',j).attr('stroke','#1A4060').attr('stroke-width',.4).attr('stroke-dasharray','1,5');
+
+  const bg=g.append('g'),lg=g.append('g');
+
+  geo.features.forEach(f=>{
+    const bn=gn(f,nk),co=gc(bn);
+    const fill=co?co.c:'#0A1018',stroke=co?(co.sk||d3.color(co.c).brighter(.3).toString()):'#121E2E';
+    const op=co?.9:.22,fi=co?gm[co.c]:null;
+    bg.append('path').datum(f).attr('d',path).attr('fill',fill).attr('stroke',stroke)
+      .attr('stroke-width',co?1.2:.35).attr('opacity',op).attr('filter',fi?`url(#${fi})`:null)
+      .style('cursor','pointer').style('transition','opacity .15s,stroke-width .15s')
+      .on('mouseenter',function(e){
+        d3.select(this).raise().attr('opacity',1).attr('stroke','#fff').attr('stroke-width',2);
+        const tt=document.getElementById('tt');
+        document.getElementById('th').innerHTML=`<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${fill};${co?`box-shadow:0 0 6px ${fill}`:''}; margin-right:6px;vertical-align:middle"></span><span style="font-size:12px;font-weight:700">${bn}</span>`;
+        document.getElementById('tc').textContent=co?co.cn:'Not in pilot zone';
+        document.getElementById('tc').style.color=co?'#00E5A0':'#2A4060';
+        document.getElementById('tn').textContent=co?co.n:'—';
+        tt.style.left=Math.min(e.clientX+16,w-220)+'px';tt.style.top=(e.clientY-10)+'px';tt.classList.add('show');
+      })
+      .on('mousemove',function(e){const tt=document.getElementById('tt');tt.style.left=Math.min(e.clientX+16,w-220)+'px';tt.style.top=(e.clientY-10)+'px'})
+      .on('mouseleave',function(){d3.select(this).attr('opacity',op).attr('stroke',stroke).attr('stroke-width',co?1.2:.35);document.getElementById('tt').classList.remove('show')});
+
+    if(co){
+      const[cx,cy]=path.centroid(f);
+      if(cx&&cy&&!isNaN(cx)){
+        const a=path.area(f),fs=a>5000?8.5:a>2000?7.5:a>800?6.5:5.5;
+        const lb=bn.length>15?bn.slice(0,14)+'…':bn;
+        const tc=co.c==='#0D1B2A'?'#3A5A7A':co.c==='#B8D940'?'#1A2744':'rgba(255,255,255,.85)';
+        lg.append('text').attr('x',cx).attr('y',cy).text(lb).attr('text-anchor','middle').attr('dominant-baseline','central')
+          .attr('font-family','JetBrains Mono,monospace').attr('font-size',fs).attr('font-weight',600).attr('fill',tc).attr('pointer-events','none');
+      }
+    }
+  });
+
+  // Frame corners
+  [[0,0,1,1],[mW,0,-1,1],[0,mH,1,-1],[mW,mH,-1,-1]].forEach(([x,y,sx,sy])=>{
+    g.append('line').attr('x1',x).attr('y1',y).attr('x2',x+16*sx).attr('y2',y).attr('stroke','#00E5A0').attr('stroke-width',1).attr('opacity',.25);
+    g.append('line').attr('x1',x).attr('y1',y).attr('x2',x).attr('y2',y+16*sy).attr('stroke','#00E5A0').attr('stroke-width',1).attr('opacity',.25);
+  });
+
+  // Coord ticks
+  const inv=proj.invert;
+  if(inv){
+    const tg=g.append('g').attr('opacity',.12);
+    for(let px=0;px<=mW;px+=mW/5){
+      const[lng]=inv([px,mH/2]);
+      tg.append('text').attr('x',px).attr('y',mH+14).text(lng.toFixed(2)+'°').attr('text-anchor','middle').attr('font-family','JetBrains Mono').attr('font-size',6).attr('fill','#2A4060');
+    }
+    for(let py=0;py<=mH;py+=mH/4){
+      const[,lat]=inv([mW/2,py]);
+      tg.append('text').attr('x',-6).attr('y',py+3).text(lat.toFixed(2)+'°').attr('text-anchor','end').attr('font-family','JetBrains Mono').attr('font-size',6).attr('fill','#2A4060');
+    }
+  }
+  console.log('[Map] Rendered',geo.features.length,'boroughs');
+}
+
+async function init(){
+  buildLegend();
+  try{
+    const{geo,nk}=await loadGeo();
+    render(geo,nk);
+    document.getElementById('loader').classList.add('hidden');
+    let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>render(geo,nk),200)});
+  }catch(e){
+    console.error('[Map] Fatal:',e);
+    document.getElementById('loader').classList.add('hidden');
+    document.getElementById('ed').textContent=e.message;
+    document.getElementById('err').classList.add('show');
+  }
+}
+init();
+</script>
+</body>
+</html>
