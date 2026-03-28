@@ -1,13 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import * as d3 from "d3";
 
-// Added a highly-reliable backup source specifically for WGS84 London bounds
-const SOURCES = [
-  { url: "https://raw.githubusercontent.com/radoi90/housequest-data/master/london_boroughs.geojson", nameKey: "name" },
-  { url: "https://skgrange.github.io/www/data/london_boroughs.json", nameKey: "name" }
-];
+// Reliable WGS84 (Lat/Lng) London Borough boundaries
+const GEO_URL = "https://raw.githubusercontent.com/radoi90/housequest-data/master/london_boroughs.geojson";
 
 const COHORTS = {
   "The Frictionless Native": { color: "#0066FF", boroughs: ["Camden","Islington","Southwark"], need: "Seamless digital integration", level: 2 },
@@ -24,141 +21,138 @@ function getCohort(boroughName) {
   if (!boroughName) return null;
   const n = boroughName.toLowerCase();
   for (const [k, v] of Object.entries(COHORTS)) {
-    if (v.boroughs.some(b => n.includes(b.toLowerCase()) || b.toLowerCase().includes(n)))
+    if (v.boroughs.some(b => n.includes(b.toLowerCase()) || b.toLowerCase().includes(n))) {
       return { cohortName: k, ...v };
+    }
   }
   return null;
 }
 
-// Safely extracts a single raw coordinate to test the projection type
-const getSampleCoordinate = (feature) => {
-  let coords = feature?.geometry?.coordinates;
-  while (coords && Array.isArray(coords[0])) {
-    coords = coords[0];
-  }
-  return coords || [0, 0];
-};
-
 export default function WaymoMap() {
-  const svgRef = useRef(null);
-  const [geo, setGeo] = useState(null);
+  const [geoData, setGeoData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [hovered, setHovered] = useState(null);
   const [dims, setDims] = useState({ w: 0, h: 0 });
 
+  // 1. Handle Window Sizing safely for Next.js SSR
   useEffect(() => {
     const handleResize = () => setDims({ w: window.innerWidth, h: window.innerHeight });
-    handleResize(); 
+    handleResize(); // Set immediately on mount
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // 2. Fetch Data
   useEffect(() => {
-    const fetchGeo = async () => {
-      for (const src of SOURCES) {
-        try {
-          const resp = await fetch(src.url);
-          if (!resp.ok) continue;
-          const data = await resp.json();
-          
-          // CRITICAL: Sanitize the GeoJSON before saving to state
-          if (data && data.features) {
-            const validFeatures = data.features.filter(f => f && f.geometry && f.geometry.coordinates);
-            if (validFeatures.length > 0) {
-              setGeo({ type: "FeatureCollection", features: validFeatures, nameKey: src.nameKey });
-              setStatus("ok");
-              return;
-            }
-          }
-        } catch (e) {
-          console.warn("Source failed, attempting backup...");
+    fetch(GEO_URL)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.features) {
+          setGeoData(data);
+          setStatus("ready");
+        } else {
+          setStatus("error");
         }
-      }
-      setStatus("error");
-    };
-    fetchGeo();
+      })
+      .catch(err => {
+        console.error("Failed to load map data", err);
+        setStatus("error");
+      });
   }, []);
 
-  const drawMap = useCallback(() => {
-    if (!geo || !svgRef.current || dims.w === 0) return;
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+  // 3. Let D3 do the math, but let React render the paths (This fixes the blank screen!)
+  const { pathGenerator, mapW, mapH, ox, oy } = useMemo(() => {
+    if (!geoData || dims.w === 0) return { pathGenerator: null };
 
-    const mapW = dims.w * 0.65;
-    const mapH = dims.h * 0.85;
-    const ox = dims.w * 0.02;
-    const oy = dims.h * 0.08;
+    const mapWidth = dims.w * 0.65;
+    const mapHeight = dims.h * 0.85;
+    const offsetX = dims.w * 0.02;
+    const offsetY = dims.h * 0.08;
 
-    // Bulletproof Projection Logic
-    let projection;
-    try {
-      const sampleCoord = getSampleCoordinate(geo.features[0]);
-      // If the coordinate is massive (> 1000), it's a British National Grid projection. Otherwise, it's standard Lat/Lon.
-      const isBNG = Math.abs(sampleCoord[0]) > 1000; 
+    // Standard Mercator Projection fitted perfectly to our bounding box
+    const projection = d3.geoMercator().fitExtent(
+      [[40, 40], [mapWidth - 40, mapHeight - 40]], 
+      geoData
+    );
 
-      projection = isBNG 
-        ? d3.geoIdentity().reflectY(true).fitExtent([[50, 50], [mapW - 50, mapH - 50]], geo)
-        : d3.geoMercator().fitExtent([[50, 50], [mapW - 50, mapH - 50]], geo);
-        
-    } catch (err) {
-      console.error("Projection mapping failed. Defaulting to manual Mercator.", err);
-      // Hard fallback to London center
-      projection = d3.geoMercator().center([-0.1276, 51.5073]).scale(60000).translate([mapW/2, mapH/2]);
-    }
+    return {
+      pathGenerator: d3.geoPath().projection(projection),
+      mapW: mapWidth,
+      mapH: mapHeight,
+      ox: offsetX,
+      oy: offsetY
+    };
+  }, [geoData, dims]);
 
-    const path = d3.geoPath().projection(projection);
+  // Handle Initial Loading States
+  if (status === "loading" || dims.w === 0) {
+    return (
+      <div style={{ background: BG, color: "#00E5A0", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", flexDirection: "column", gap: 20 }}>
+        <div style={{ width: 40, height: 40, border: "3px solid #141E30", borderTop: "3px solid #00E5A0", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+        <div>SECURING WAYMO DATA LINK...</div>
+        <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
-    const g = svg.append("g").attr("transform", `translate(${ox},${oy})`);
+  if (status === "error") {
+    return (
+      <div style={{ background: BG, color: "#EF4444", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace" }}>
+        DATA LINK FAILED. CHECK BROWSER CONSOLE.
+      </div>
+    );
+  }
 
-    // Background Grid
-    const gridG = g.append("g").attr("opacity", 0.05);
-    for (let i = 0; i <= mapW; i += 60) gridG.append("line").attr("x1", i).attr("y1", 0).attr("x2", i).attr("y2", mapH).attr("stroke", "#00E5A0").attr("stroke-width", 0.5);
-    for (let j = 0; j <= mapH; j += 60) gridG.append("line").attr("x1", 0).attr("y1", j).attr("x2", mapW).attr("y2", j).attr("stroke", "#00E5A0").attr("stroke-width", 0.5);
-
-    const boroughG = g.append("g");
-
-    // Draw Map Paths
-    geo.features.forEach(f => {
-      const name = f.properties[geo.nameKey] || f.properties.name || f.properties.NAME || "Unknown";
-      const cohort = getCohort(name);
-      
-      boroughG.append("path")
-        .datum(f)
-        .attr("d", path)
-        .attr("fill", cohort ? cohort.color : UNMAPPED)
-        .attr("stroke", cohort ? "#fff" : UNMAPPED_STROKE)
-        .attr("stroke-width", cohort ? 1 : 0.3)
-        .attr("opacity", cohort ? 0.8 : 0.3)
-        .style("transition", "opacity 0.2s ease, stroke-width 0.2s ease")
-        .on("mouseenter", function(e) {
-          d3.select(this).raise().attr("opacity", 1).attr("stroke-width", 2);
-          setHovered({ name, cohort: cohort?.cohortName || "Non-Pilot Area", color: cohort?.color || UNMAPPED, x: e.clientX, y: e.clientY });
-        })
-        .on("mousemove", (e) => setHovered(h => h ? { ...h, x: e.clientX, y: e.clientY } : null))
-        .on("mouseleave", function() {
-          d3.select(this).attr("opacity", cohort ? 0.8 : 0.3).attr("stroke-width", cohort ? 1 : 0.3);
-          setHovered(null);
-        });
-    });
-
-    // Frame UI Corners
-    const cs = 20;
-    const corners = [[0,0,1,1], [mapW,0,-1,1], [0,mapH,1,-1], [mapW,mapH,-1,-1]];
-    corners.forEach(([x,y,sx,sy]) => {
-      g.append("line").attr("x1",x).attr("y1",y).attr("x2",x+cs*sx).attr("y2",y).attr("stroke","#00E5A0").attr("stroke-width",2);
-      g.append("line").attr("x1",x).attr("y1",y).attr("x2",x).attr("y2",y+cs*sy).attr("stroke","#00E5A0").attr("stroke-width",2);
-    });
-
-  }, [geo, dims]);
-
-  useEffect(() => { drawMap(); }, [drawMap]);
-
-  if (status === "loading") return <div style={{background:BG, color:"#00E5A0", height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace"}}>INITIALIZING SECURE DATA LINK...</div>;
-  if (status === "error") return <div style={{background:BG, color:"#EF4444", height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace"}}>COULD NOT FETCH GEOJSON DATA.</div>;
+  // Draw the Background Grid
+  const renderGrid = () => {
+    const lines = [];
+    for (let i = 0; i <= mapW; i += 60) lines.push(<line key={`vx-${i}`} x1={i} y1={0} x2={i} y2={mapH} stroke="#00E5A0" strokeWidth={0.5} opacity={0.1} />);
+    for (let j = 0; j <= mapH; j += 60) lines.push(<line key={`hx-${j}`} x1={0} y1={j} x2={mapW} y2={j} stroke="#00E5A0" strokeWidth={0.5} opacity={0.1} />);
+    return lines;
+  };
 
   return (
     <div style={{ width: "100vw", height: "100vh", background: BG, overflow: "hidden", position: "relative", fontFamily: "monospace" }}>
-      <svg ref={svgRef} width={dims.w} height={dims.h} />
+      
+      {/* THE MAP SVG */}
+      <svg width={dims.w} height={dims.h} style={{ position: "absolute", top: 0, left: 0 }}>
+        <g transform={`translate(${ox}, ${oy})`}>
+          {/* 1. Draw Grid */}
+          {renderGrid()}
+
+          {/* 2. Draw Boroughs via React (No D3 DOM manipulation!) */}
+          <g>
+            {geoData.features.map((feature, i) => {
+              const name = feature.properties.name || feature.properties.NAME || `Borough-${i}`;
+              const cohort = getCohort(name);
+              const isHovered = hovered?.name === name;
+
+              return (
+                <path
+                  key={name}
+                  d={pathGenerator(feature)}
+                  fill={cohort ? cohort.color : UNMAPPED}
+                  stroke={isHovered ? "#fff" : (cohort ? "#fff" : UNMAPPED_STROKE)}
+                  strokeWidth={isHovered ? 2 : (cohort ? 1 : 0.4)}
+                  opacity={isHovered ? 1 : (cohort ? 0.8 : 0.3)}
+                  style={{ transition: "all 0.2s ease", cursor: "pointer" }}
+                  onMouseEnter={(e) => setHovered({ name, cohort: cohort?.cohortName || "Non-Pilot Area", color: cohort?.color || UNMAPPED, x: e.clientX, y: e.clientY })}
+                  onMouseMove={(e) => setHovered(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : null)}
+                  onMouseLeave={() => setHovered(null)}
+                />
+              );
+            })}
+          </g>
+
+          {/* 3. Draw UI Corners */}
+          <g stroke="#00E5A0" strokeWidth="2">
+            <polyline points={`0,20 0,0 20,0`} fill="none" />
+            <polyline points={`${mapW-20},0 ${mapW},0 ${mapW},20`} fill="none" />
+            <polyline points={`0,${mapH-20} 0,${mapH} 20,${mapH}`} fill="none" />
+            <polyline points={`${mapW-20},${mapH} ${mapW},${mapH} ${mapW},${mapH-20}`} fill="none" />
+          </g>
+        </g>
+      </svg>
       
       {/* HUD Header */}
       <div style={{position:"absolute", top:30, left:40, pointerEvents:"none"}}>
@@ -171,10 +165,10 @@ export default function WaymoMap() {
         <div style={{color:"#3A5A7A", fontSize:10, letterSpacing:3, marginBottom:30}}>COHORT CLASSIFICATION</div>
         {Object.entries(COHORTS).map(([name, data]) => (
           <div key={name} style={{marginBottom:25, display:"flex", gap:15}}>
-            <div style={{width:40, height:40, background:data.color, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: data.color === "#B8D940" ? "#000" : "#fff", fontWeight:900}}>L{data.level}</div>
+            <div style={{width:40, height:40, background:data.color, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: data.color === "#B8D940" ? "#000" : "#fff", fontWeight:900, fontSize: 14}}>L{data.level}</div>
             <div>
-              <div style={{color:"#fff", fontSize:12, fontWeight:700}}>{name}</div>
-              <div style={{color:"#4A6A8A", fontSize:10, marginTop:4}}>{data.need}</div>
+              <div style={{color:"#fff", fontSize:13, fontWeight:700}}>{name}</div>
+              <div style={{color:"#4A6A8A", fontSize:11, marginTop:4}}>{data.need}</div>
             </div>
           </div>
         ))}
