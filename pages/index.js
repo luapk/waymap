@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
 
+// Added a highly-reliable backup source specifically for WGS84 London bounds
 const SOURCES = [
   { url: "https://raw.githubusercontent.com/radoi90/housequest-data/master/london_boroughs.geojson", nameKey: "name" },
-  { url: "https://raw.githubusercontent.com/westminsterDataStudio/open_data/main/boundary_files/boroughs_london.geojson", nameKey: "NAME" },
+  { url: "https://skgrange.github.io/www/data/london_boroughs.json", nameKey: "name" }
 ];
 
 const COHORTS = {
@@ -29,6 +30,15 @@ function getCohort(boroughName) {
   return null;
 }
 
+// Safely extracts a single raw coordinate to test the projection type
+const getSampleCoordinate = (feature) => {
+  let coords = feature?.geometry?.coordinates;
+  while (coords && Array.isArray(coords[0])) {
+    coords = coords[0];
+  }
+  return coords || [0, 0];
+};
+
 export default function WaymoMap() {
   const svgRef = useRef(null);
   const [geo, setGeo] = useState(null);
@@ -38,7 +48,7 @@ export default function WaymoMap() {
 
   useEffect(() => {
     const handleResize = () => setDims({ w: window.innerWidth, h: window.innerHeight });
-    handleResize(); // Initial sizing
+    handleResize(); 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
@@ -50,14 +60,18 @@ export default function WaymoMap() {
           const resp = await fetch(src.url);
           if (!resp.ok) continue;
           const data = await resp.json();
-          // Ensure it's a valid FeatureCollection
-          if (data && data.features && data.features.length > 0) {
-            setGeo(data);
-            setStatus("ok");
-            return;
+          
+          // CRITICAL: Sanitize the GeoJSON before saving to state
+          if (data && data.features) {
+            const validFeatures = data.features.filter(f => f && f.geometry && f.geometry.coordinates);
+            if (validFeatures.length > 0) {
+              setGeo({ type: "FeatureCollection", features: validFeatures, nameKey: src.nameKey });
+              setStatus("ok");
+              return;
+            }
           }
         } catch (e) {
-          console.warn("Source failed, attempting fallback...");
+          console.warn("Source failed, attempting backup...");
         }
       }
       setStatus("error");
@@ -75,29 +89,22 @@ export default function WaymoMap() {
     const ox = dims.w * 0.02;
     const oy = dims.h * 0.08;
 
-    // --- AUTO-DETECT COORDINATE SYSTEM ---
-    let isProjected = false;
+    // Bulletproof Projection Logic
+    let projection;
     try {
-      // Look at the first coordinate of the first polygon to see if it's WGS84 or BNG
-      const firstFeature = geo.features[0];
-      let firstCoord;
-      if (firstFeature.geometry.type === "MultiPolygon") {
-        firstCoord = firstFeature.geometry.coordinates[0][0][0];
-      } else {
-        firstCoord = firstFeature.geometry.coordinates[0][0];
-      }
-      // If Longitude is greater than 180, it's not standard lat/long
-      if (Math.abs(firstCoord[0]) > 180 || Math.abs(firstCoord[1]) > 90) {
-        isProjected = true;
-      }
-    } catch (e) {
-      console.warn("Could not sample coordinates, defaulting to Mercator");
-    }
+      const sampleCoord = getSampleCoordinate(geo.features[0]);
+      // If the coordinate is massive (> 1000), it's a British National Grid projection. Otherwise, it's standard Lat/Lon.
+      const isBNG = Math.abs(sampleCoord[0]) > 1000; 
 
-    // Apply the correct mathematical projection based on the data
-    const projection = isProjected
-      ? d3.geoIdentity().reflectY(true).fitExtent([[40, 40], [mapW - 40, mapH - 40]], geo)
-      : d3.geoMercator().fitExtent([[40, 40], [mapW - 40, mapH - 40]], geo);
+      projection = isBNG 
+        ? d3.geoIdentity().reflectY(true).fitExtent([[50, 50], [mapW - 50, mapH - 50]], geo)
+        : d3.geoMercator().fitExtent([[50, 50], [mapW - 50, mapH - 50]], geo);
+        
+    } catch (err) {
+      console.error("Projection mapping failed. Defaulting to manual Mercator.", err);
+      // Hard fallback to London center
+      projection = d3.geoMercator().center([-0.1276, 51.5073]).scale(60000).translate([mapW/2, mapH/2]);
+    }
 
     const path = d3.geoPath().projection(projection);
 
@@ -110,9 +117,9 @@ export default function WaymoMap() {
 
     const boroughG = g.append("g");
 
-    // Draw paths
+    // Draw Map Paths
     geo.features.forEach(f => {
-      const name = f.properties.name || f.properties.NAME || "Unknown";
+      const name = f.properties[geo.nameKey] || f.properties.name || f.properties.NAME || "Unknown";
       const cohort = getCohort(name);
       
       boroughG.append("path")
@@ -122,7 +129,7 @@ export default function WaymoMap() {
         .attr("stroke", cohort ? "#fff" : UNMAPPED_STROKE)
         .attr("stroke-width", cohort ? 1 : 0.3)
         .attr("opacity", cohort ? 0.8 : 0.3)
-        .style("transition", "opacity 0.2s, stroke-width 0.2s")
+        .style("transition", "opacity 0.2s ease, stroke-width 0.2s ease")
         .on("mouseenter", function(e) {
           d3.select(this).raise().attr("opacity", 1).attr("stroke-width", 2);
           setHovered({ name, cohort: cohort?.cohortName || "Non-Pilot Area", color: cohort?.color || UNMAPPED, x: e.clientX, y: e.clientY });
@@ -134,7 +141,7 @@ export default function WaymoMap() {
         });
     });
 
-    // Outer UI Bounding Box Frame
+    // Frame UI Corners
     const cs = 20;
     const corners = [[0,0,1,1], [mapW,0,-1,1], [0,mapH,1,-1], [mapW,mapH,-1,-1]];
     corners.forEach(([x,y,sx,sy]) => {
